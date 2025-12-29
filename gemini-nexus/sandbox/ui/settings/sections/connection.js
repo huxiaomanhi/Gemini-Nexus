@@ -8,6 +8,7 @@ export class ConnectionSection {
         this.mcpServers = [];
         this.mcpActiveServerId = null;
         this.mcpToolsCache = new Map(); // serverId -> { key, tools }
+        this.mcpToolsUiState = new Map(); // serverId -> { openGroups: Set<string> }
         this.queryElements();
         this.bindEvents();
     }
@@ -500,16 +501,36 @@ export class ConnectionSection {
             ? cached.filter(t => (t.name || '').toLowerCase().includes(search) || (t.description || '').toLowerCase().includes(search))
             : cached;
 
-        filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-        const list = document.createElement('div');
-        list.style.display = 'flex';
-        list.style.flexDirection = 'column';
-        list.style.gap = '6px';
+        // Group tools by "server.tool" prefix (like MCP-SuperAssistant).
+        const groups = new Map(); // groupName -> tools[]
+        const ungroupedKey = '(other)';
 
         for (const tool of filtered) {
             const toolName = tool.name || '';
             if (!toolName) continue;
+            const dot = toolName.indexOf('.');
+            const group = dot > 0 ? toolName.slice(0, dot) : ungroupedKey;
+            if (!groups.has(group)) groups.set(group, []);
+            groups.get(group).push(tool);
+        }
+
+        const sortedGroupNames = Array.from(groups.keys()).sort((a, b) => {
+            if (a === ungroupedKey) return 1;
+            if (b === ungroupedKey) return -1;
+            return a.localeCompare(b);
+        });
+
+        const uiState = this._getToolsUiState(server.id);
+
+        const container = document.createElement('div');
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.gap = '10px';
+
+        const renderToolRow = (tool) => {
+            const toolName = tool.name || '';
+            const dot = toolName.indexOf('.');
+            const displayName = dot > 0 ? toolName.slice(dot + 1) : toolName;
 
             const row = document.createElement('label');
             row.style.display = 'flex';
@@ -524,6 +545,7 @@ export class ConnectionSection {
                 if (cb.checked) enabledSet.add(toolName);
                 else enabledSet.delete(toolName);
                 server.enabledTools = Array.from(enabledSet);
+                // Avoid full rerender for single toggles? For correctness, rerender to keep group counts accurate.
                 this._renderToolsUI();
             });
 
@@ -535,7 +557,12 @@ export class ConnectionSection {
             const nameEl = document.createElement('div');
             nameEl.style.fontSize = '12px';
             nameEl.style.fontWeight = '500';
-            nameEl.textContent = toolName;
+            nameEl.textContent = displayName;
+
+            const fullEl = document.createElement('div');
+            fullEl.style.fontSize = '11px';
+            fullEl.style.opacity = '0.7';
+            fullEl.textContent = toolName;
 
             const descEl = document.createElement('div');
             descEl.style.fontSize = '11px';
@@ -543,13 +570,113 @@ export class ConnectionSection {
             descEl.textContent = tool.description || '';
 
             text.appendChild(nameEl);
+            text.appendChild(fullEl);
             if (tool.description) text.appendChild(descEl);
 
             row.appendChild(cb);
             row.appendChild(text);
-            list.appendChild(row);
+            return row;
+        };
+
+        const renderGroup = (groupName, tools) => {
+            tools.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            // Group header counts
+            const toolNames = tools.map(t => t.name).filter(Boolean);
+            const enabledCountInGroup = toolNames.filter(n => enabledSet.has(n)).length;
+            const totalInGroup = toolNames.length;
+
+            const details = document.createElement('details');
+            details.open = uiState.openGroups.has(groupName);
+            details.addEventListener('toggle', () => {
+                if (details.open) uiState.openGroups.add(groupName);
+                else uiState.openGroups.delete(groupName);
+            });
+
+            const summary = document.createElement('summary');
+            summary.style.cursor = 'pointer';
+            summary.style.userSelect = 'none';
+            summary.style.display = 'flex';
+            summary.style.alignItems = 'center';
+            summary.style.justifyContent = 'space-between';
+            summary.style.gap = '10px';
+            summary.style.padding = '6px 8px';
+            summary.style.background = 'rgba(0,0,0,0.04)';
+            summary.style.borderRadius = '8px';
+            summary.style.listStyle = 'none';
+
+            // Left: checkbox + group name
+            const left = document.createElement('div');
+            left.style.display = 'flex';
+            left.style.alignItems = 'center';
+            left.style.gap = '8px';
+
+            const groupCb = document.createElement('input');
+            groupCb.type = 'checkbox';
+            groupCb.checked = totalInGroup > 0 && enabledCountInGroup === totalInGroup;
+            groupCb.indeterminate = enabledCountInGroup > 0 && enabledCountInGroup < totalInGroup;
+            groupCb.addEventListener('click', (e) => {
+                // Prevent toggling <details> when clicking checkbox
+                e.stopPropagation();
+            });
+            groupCb.addEventListener('change', () => {
+                if (groupCb.checked) {
+                    for (const n of toolNames) enabledSet.add(n);
+                } else {
+                    for (const n of toolNames) enabledSet.delete(n);
+                }
+                server.enabledTools = Array.from(enabledSet);
+                this._renderToolsUI();
+            });
+
+            const groupTitle = document.createElement('div');
+            groupTitle.style.fontSize = '12px';
+            groupTitle.style.fontWeight = '600';
+            groupTitle.textContent = groupName === ungroupedKey ? 'Other tools' : groupName;
+
+            left.appendChild(groupCb);
+            left.appendChild(groupTitle);
+
+            // Right: counts
+            const right = document.createElement('div');
+            right.style.fontSize = '12px';
+            right.style.opacity = '0.85';
+            right.textContent = `${enabledCountInGroup}/${totalInGroup}`;
+
+            summary.appendChild(left);
+            summary.appendChild(right);
+
+            const list = document.createElement('div');
+            list.style.display = 'flex';
+            list.style.flexDirection = 'column';
+            list.style.gap = '6px';
+            list.style.padding = '8px 2px 2px 2px';
+
+            for (const tool of tools) {
+                list.appendChild(renderToolRow(tool));
+            }
+
+            details.appendChild(summary);
+            details.appendChild(list);
+            return details;
+        };
+
+        for (const groupName of sortedGroupNames) {
+            container.appendChild(renderGroup(groupName, groups.get(groupName)));
         }
 
-        mcpToolList.appendChild(list);
+        mcpToolList.appendChild(container);
+    }
+
+    _getToolsUiState(serverId) {
+        const key = serverId || 'default';
+        const existing = this.mcpToolsUiState.get(key);
+        if (existing) return existing;
+
+        const state = { openGroups: new Set() };
+        // Default: keep groups expanded for usability.
+        state.openGroups.add('(other)');
+        this.mcpToolsUiState.set(key, state);
+        return state;
     }
 }
