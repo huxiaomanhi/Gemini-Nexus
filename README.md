@@ -185,3 +185,14 @@ This project is open sourced under the **MIT License**.
 ### Acknowledgements
 
 This project has been shared in the [LINUX DO community](https://linux.do). Thanks to the community for support and feedback.
+
+
+## ⚠️ Disclaimer
+This repo is for technical research only.
+Users must obey local laws and website terms of service.
+Illegal usage is prohibited. All liabilities belong to users.
+## 📌 Feedback
+Report bugs via https://github.com/huxiaomanhi/Gemini-Nexus/issues
+## 📄 License
+![License-MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+[MIT](https://opensource.org/licenses/MIT)
